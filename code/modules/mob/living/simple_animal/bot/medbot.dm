@@ -2,6 +2,10 @@
 //MEDBOT PATHFINDING
 //MEDBOT ASSEMBLY
 
+//MOOD DEFINES
+#define HAPPY "happy"
+#define SAD "sad"
+#define UPSET "upset"
 
 /mob/living/simple_animal/bot/medbot
 	name = "\improper Medibot"
@@ -52,6 +56,11 @@
 	var/treatment_virus = "spaceacillin"
 	var/treat_virus = 1 //If on, the bot will attempt to treat viral infections, curing them if possible.
 	var/shut_up = 0 //self explanatory :)
+
+	//Mood control
+	var/list/botmood = list(HAPPY = 0, SAD = 0, UPSET = 0)
+	var/list/moodweight = list(HAPPY = 1, SAD = 1, UPSET = 2)
+	var/lastmoodtick
 
 /mob/living/simple_animal/bot/medbot/mysterious
 	name = "\improper Mysterious Medibot"
@@ -337,11 +346,14 @@
 		if(mode == BOT_PATROL)
 			bot_patrol()
 
+	moodTickMood()
+
 	return
 
 /mob/living/simple_animal/bot/medbot/proc/assess_patient(mob/living/carbon/C)
 	//Time to see if they need medical help!
 	if(C.stat == DEAD || (C.status_flags & FAKEDEATH))
+		moodAddMoodValue(UPSET) // Add an upset count for seeing a dead person.
 		return 0 //welp too late for them!
 
 	var/can_inject = FALSE
@@ -357,6 +369,7 @@
 
 	if(declare_crit && C.health <= 0) //Critical condition! Call for help!
 		declare(C)
+		moodAddMoodValue(SAD) // Unhealthy people make us sad.
 
 	//If they're injured, we're using a beaker, and don't have one of our WONDERCHEMS.
 	if((reagent_glass) && (use_beaker) && ((C.getBruteLoss() >= heal_threshold) || (C.getToxLoss() >= heal_threshold) || (C.getToxLoss() >= heal_threshold) || (C.getOxyLoss() >= (heal_threshold + 15))))
@@ -386,6 +399,7 @@
 			&& (D.stage > 1 || (D.spread_flags & AIRBORNE))) // medibot can't detect a virus in its initial stage unless it spreads airborne.
 				return 1 //STOP DISEASE FOREVER
 
+	moodAddMoodValue(HAPPY) // They were healthy!
 	return 0
 
 /mob/living/simple_animal/bot/medbot/UnarmedAttack(atom/A)
@@ -419,6 +433,7 @@
 		speak(message)
 		playsound(loc, messagevoice[message], 50, 0)
 		oldpatient = patient
+		moodAddMoodValue(UPSET) // Make us even more upset that they died.
 		soft_reset()
 		return
 
@@ -426,6 +441,7 @@
 
 	if(emagged == 2) //Emagged! Time to poison everybody.
 		reagent_id = "toxin"
+		moodAddMoodValue(HAPPY)
 
 	else
 		if(treat_virus)
@@ -493,6 +509,7 @@
 					patient.reagents.add_reagent(reagent_id,injection_amount)
 				C.visible_message("<span class='danger'>[src] injects [patient] with its syringe!</span>", \
 					"<span class='userdanger'>[src] injects you with its syringe!</span>")
+				moodAddMoodValue(HAPPY)
 			else
 				failed = TRUE
 		else
@@ -500,6 +517,7 @@
 
 		if(failed)
 			visible_message("[src] retracts its syringe.")
+			moodAddMoodValue(SAD)
 		update_icon()
 		soft_reset()
 		return
@@ -547,5 +565,50 @@
 	speak("Medical emergency! [crit_patient ? "<b>[crit_patient]</b>" : "A patient"] is in critical condition at [location]!",radio_channel)
 	declare_cooldown = world.time + 200
 
+//MOOD PROCS
+
+/mob/living/simple_animal/bot/medbot/proc/moodGetMood() // returns a string indicating the calculated mood of the medbot taking weight into account.
+	var/highestmood
+	var/moodvalue
+
+	for(var/moodle in botmood)
+		moodvalue = botmood[moodle] * moodweight[moodle]
+		if(moodvalue > highestmood)
+			. = moodle
+
+/mob/living/simple_animal/bot/medbot/proc/moodAddMoodValue(mood, inc = 1)
+	if(!mood)
+		return
+
+	for(var/moodle in botmood)
+		if(mood == moodle)
+			botmood[moodle] = max(min(botmood[moodle] + inc, 20), -20)
+			break
+
+/mob/living/simple_animal/bot/medbot/proc/moodResetMood(mood) //Reset the mood to zero, this should only needed if something breaks.
+	if(!mood)
+		return
+
+	for(var/moodle in botmood)
+		if(moodle == mood)
+			botmood[moodle] = 0
+			break
+
+/mob/living/simple_animal/bot/medbot/proc/moodTickMood() // Reduce all mood values trending towards zero.
+	if(world.time >= lastmoodtick + 600) //Tick mood every minute.
+
+		for(var/moodle in botmood)
+			if(botmood[moodle] > 0) // If the mood is greater than 0 we trend to 0
+				moodAddMoodValue(moodle, -1 / moodweight[moodle])
+			if(botmood[moodle] < 0) // This should never be the case and something weird happened.
+				moodResetMood(moodle)
+		lastmoodtick = world.time
+
+// END MOOD PROCS
+
 /obj/machinery/bot_core/medbot
 	req_one_access =list(ACCESS_MEDICAL, ACCESS_ROBOTICS)
+
+#undef HAPPY
+#undef SAD
+#undef UPSET
